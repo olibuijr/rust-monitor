@@ -1,0 +1,135 @@
+mod alert;
+mod collectors;
+mod config;
+mod db;
+mod routes;
+mod schema;
+mod tailer;
+
+use axum::{routing::get, Router};
+use tower_http::services::{ServeDir, ServeFile};
+
+#[tokio::main]
+async fn main() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("rust_monitor=info")),
+        )
+        .init();
+
+    tracing::info!("rust-monitor starting up");
+
+    let cfg = config::get();
+
+    // Initialize DB (triggers LazyLock)
+    db::with_db(|_| {});
+
+    // Spawn metric collector task
+    let interval = cfg.interval_secs;
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(interval));
+        loop {
+            ticker.tick().await;
+            let metrics = tokio::task::spawn_blocking(collectors::collect_all)
+                .await
+                .unwrap_or_default();
+
+            let now = chrono::Utc::now().timestamp();
+            let count = metrics.len();
+            db::with_db(|conn| {
+                for m in &metrics {
+                    conn.execute(
+                        "INSERT INTO metrics (name, value, ts) VALUES (?1, ?2, ?3)",
+                        rusqlite::params![m.name, m.value, now],
+                    )
+                    .ok();
+                }
+            });
+
+            tracing::debug!(count, "collected metrics");
+        }
+    });
+
+    // Spawn log tailer task
+    let log_files = cfg.log_files.clone();
+    let tailer_interval = cfg.interval_secs;
+    tokio::spawn(async move {
+        let mut log_tailer = tailer::LogTailer::new(&log_files);
+        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(tailer_interval));
+        loop {
+            ticker.tick().await;
+            let entries = log_tailer.read_new_lines();
+            if entries.is_empty() {
+                continue;
+            }
+
+            let now = chrono::Utc::now().timestamp();
+            let count = entries.len();
+            db::with_db(|conn| {
+                for (source, line) in &entries {
+                    conn.execute(
+                        "INSERT INTO logs (source, line, ts) VALUES (?1, ?2, ?3)",
+                        rusqlite::params![source, line, now],
+                    )
+                    .ok();
+                }
+            });
+
+            tracing::debug!(count, "tailed log lines");
+        }
+    });
+
+    // Spawn alert engine task
+    let alert_log = cfg.alert_log.clone();
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
+        loop {
+            ticker.tick().await;
+            alert::evaluate_alerts(&alert_log);
+        }
+    });
+
+    // Spawn retention cleanup task
+    let retention_days = cfg.retention_days;
+    let log_retention_days = cfg.log_retention_days;
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(3600));
+        loop {
+            ticker.tick().await;
+            let now = chrono::Utc::now().timestamp();
+            let metric_cutoff = now - (retention_days * 86400);
+            let log_cutoff = now - (log_retention_days * 86400);
+
+            db::with_db(|conn| {
+                let m = conn
+                    .execute("DELETE FROM metrics WHERE ts < ?1", rusqlite::params![metric_cutoff])
+                    .unwrap_or(0);
+                let l = conn
+                    .execute("DELETE FROM logs WHERE ts < ?1", rusqlite::params![log_cutoff])
+                    .unwrap_or(0);
+                if m > 0 || l > 0 {
+                    tracing::info!(metrics_deleted = m, logs_deleted = l, "retention cleanup");
+                }
+            });
+        }
+    });
+
+    // Build the router
+    let index_path = format!("{}/index.html", cfg.static_dir);
+    let static_service = ServeDir::new(&cfg.static_dir)
+        .append_index_html_on_directories(true)
+        .fallback(ServeFile::new(&index_path));
+
+    let app = Router::new()
+        .route("/api/health", get(routes::health))
+        .route("/api/status", get(routes::status))
+        .route("/api/metrics", get(routes::metrics))
+        .route("/api/logs", get(routes::logs))
+        .route("/api/alerts", get(routes::alerts))
+        .fallback_service(static_service);
+
+    let listener = tokio::net::TcpListener::bind(&cfg.listen_addr).await.unwrap();
+    tracing::info!("listening on {}", cfg.listen_addr);
+    axum::serve(listener, app).await.unwrap();
+}
