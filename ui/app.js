@@ -12,6 +12,8 @@ const LOG_CAP = 1000;
 let logRangeHours = 1;
 let logSearch = '';
 let logExcluded = new Set();
+let logExcludedCats = new Set();
+let logLevel = 'all'; // 'all' | 'warn' | 'error'
 let logSourceKey = '';
 let connState = 'connecting'; // 'live' | 'polling' | 'connecting'
 
@@ -331,25 +333,78 @@ function srcName(source) {
   return source.split('/').pop();
 }
 
+const LEVEL_RANK = { debug: 0, info: 1, warn: 2, error: 3 };
+
+// Deterministic categorisation + level detection for known log formats.
+function classifyLog(source, line) {
+  const s = source.toLowerCase();
+  let category = 'System';
+  if (s.includes('nginx')) category = 'HTTP';
+  else if (s.includes('auth')) category = 'Auth';
+  else if (s.includes('mail') || s.includes('postfix') || s.includes('dovecot')) category = 'Mail';
+  else if (s.includes('dns')) category = 'DNS';
+  else if (s.includes('idp') || s.includes('monitor') || s.includes('akurai')) category = 'App';
+
+  let level = 'info';
+
+  // nginx access log: "...\"GET /path HTTP/1.1\" 503 ..."
+  const http = line.match(/"\s*(?:GET|POST|PUT|DELETE|HEAD|PATCH|OPTIONS)\b[^"]*"\s+(\d{3})/);
+  // Rust tracing / many app logs: a bare level token
+  const tr = line.match(/\b(TRACE|DEBUG|INFO|WARN|ERROR)\b/);
+
+  if (category === 'HTTP' && http) {
+    const code = +http[1];
+    category = 'HTTP';
+    level = code >= 500 ? 'error' : code >= 400 ? 'warn' : 'info';
+  } else if (tr) {
+    const t = tr[1];
+    level = t === 'ERROR' ? 'error' : t === 'WARN' ? 'warn' : t === 'TRACE' || t === 'DEBUG' ? 'debug' : 'info';
+  } else if (/\b(fatal|panic|critical|segfault|err(?:or)?|failed|failure|denied|refused|reject)\b/i.test(line)) {
+    level = 'error';
+  } else if (/\b(warn(?:ing)?|deprecat\w*|timeout|timed out|retry|retrying|throttl)\b/i.test(line)) {
+    level = 'warn';
+  }
+
+  // Auth-specific refinements
+  if (category === 'Auth') {
+    if (/Failed password|authentication failure|invalid user|Failed |Disconnect/i.test(line)) level = 'warn';
+    if (/Accepted (?:password|publickey)/i.test(line)) level = 'info';
+  }
+
+  return { level, category };
+}
+
+function logCategories() {
+  return [...new Set(liveLogs.map((l) => classifyLog(l.source, l.line).category))].sort();
+}
+
 function renderLogRows() {
   const tbody = document.getElementById('log-rows');
   const countEl = document.getElementById('log-count');
   if (!tbody) return;
 
-  const rows = liveLogs.filter(
-    (l) => !logExcluded.has(l.source) && (logSearch === '' || l.line.toLowerCase().includes(logSearch))
-  );
+  const minRank = logLevel === 'error' ? 3 : logLevel === 'warn' ? 2 : 0;
+
+  const rows = liveLogs
+    .map((l) => ({ ...l, ...classifyLog(l.source, l.line) }))
+    .filter(
+      (l) =>
+        !logExcluded.has(l.source) &&
+        !logExcludedCats.has(l.category) &&
+        LEVEL_RANK[l.level] >= minRank &&
+        (logSearch === '' || l.line.toLowerCase().includes(logSearch))
+    );
 
   if (countEl) countEl.textContent = `${rows.length} line${rows.length === 1 ? '' : 's'}`;
 
   if (rows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="3" class="empty">No matching log entries</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">No matching log entries</td></tr>';
     return;
   }
   tbody.innerHTML = rows
     .map(
       (l) =>
-        `<tr><td class="t">${ts(l.ts)}</td><td class="s">${srcName(l.source)}</td><td class="line">${escapeHtml(l.line)}</td></tr>`
+        `<tr class="lvl-${l.level}"><td class="t">${ts(l.ts)}</td><td class="lv"><span class="badge ${l.level}">${l.level}</span></td><td class="s">${srcName(l.source)}</td><td class="line"><span class="cat">${l.category}</span>${escapeHtml(l.line)}</td></tr>`
     )
     .join('');
 }
@@ -361,13 +416,33 @@ function renderLogsLayout() {
   const counts = {};
   for (const l of liveLogs) counts[l.source] = (counts[l.source] || 0) + 1;
 
+  const cats = logCategories();
+  const catCounts = {};
+  for (const l of liveLogs) {
+    const c = classifyLog(l.source, l.line).category;
+    catCounts[c] = (catCounts[c] || 0) + 1;
+  }
+
   let sidebar = '<aside class="log-filters">';
   sidebar += '<div class="fgroup"><label>Range</label><div class="ranges">';
   for (const [h, lbl] of LOG_RANGES) {
     sidebar += `<button class="range${h === logRangeHours ? ' active' : ''}" data-hours="${h}">${lbl}</button>`;
   }
   sidebar += '</div></div>';
+  sidebar += '<div class="fgroup"><label>Level</label><div class="ranges">';
+  for (const [val, lbl] of [['all', 'All'], ['warn', 'Warn+'], ['error', 'Errors']]) {
+    sidebar += `<button class="range${val === logLevel ? ' active' : ''}" data-level="${val}">${lbl}</button>`;
+  }
+  sidebar += '</div></div>';
   sidebar += `<div class="fgroup"><label>Search</label><input id="log-search" type="search" placeholder="filter text…" value="${escapeHtml(logSearch)}"></div>`;
+  if (cats.length > 0) {
+    sidebar += '<div class="fgroup"><label>Category</label><div class="sources">';
+    for (const c of cats) {
+      const checked = logExcludedCats.has(c) ? '' : 'checked';
+      sidebar += `<label class="src"><input type="checkbox" data-cat="${escapeHtml(c)}" ${checked}><span>${c}</span><em>${catCounts[c] || 0}</em></label>`;
+    }
+    sidebar += '</div></div>';
+  }
   sidebar += '<div class="fgroup"><label>Sources</label><div class="sources">';
   if (sources.length === 0) {
     sidebar += '<span class="empty-mini">none yet</span>';
@@ -382,16 +457,23 @@ function renderLogsLayout() {
   const content =
     '<div class="log-content">' +
     `<div class="log-head"><span class="conn">${connLabel()}</span><span id="log-count" class="log-count"></span></div>` +
-    '<div class="log-scroll"><table class="logtable"><colgroup><col class="c-t"><col class="c-s"><col class="c-l"></colgroup>' +
-    '<thead><tr><th>Time</th><th>Source</th><th>Line</th></tr></thead>' +
+    '<div class="log-scroll"><table class="logtable"><colgroup><col class="c-t"><col class="c-lv"><col class="c-s"><col class="c-l"></colgroup>' +
+    '<thead><tr><th>Time</th><th>Level</th><th>Source</th><th>Line</th></tr></thead>' +
     '<tbody id="log-rows"></tbody></table></div></div>';
 
   app.innerHTML = `<div class="logs-layout">${sidebar}${content}</div>`;
 
-  app.querySelectorAll('.log-filters button.range').forEach((btn) => {
+  app.querySelectorAll('.log-filters button[data-hours]').forEach((btn) => {
     btn.addEventListener('click', () => {
       logRangeHours = Number(btn.dataset.hours);
       renderLogs();
+    });
+  });
+  app.querySelectorAll('.log-filters button[data-level]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      logLevel = btn.dataset.level;
+      app.querySelectorAll('.log-filters button[data-level]').forEach((b) => b.classList.toggle('active', b === btn));
+      renderLogRows();
     });
   });
   const search = document.getElementById('log-search');
@@ -401,10 +483,17 @@ function renderLogsLayout() {
       renderLogRows();
     });
   }
-  app.querySelectorAll('.log-filters input[type="checkbox"]').forEach((cb) => {
+  app.querySelectorAll('.log-filters input[data-source]').forEach((cb) => {
     cb.addEventListener('change', () => {
       const src = cb.dataset.source;
       if (cb.checked) logExcluded.delete(src); else logExcluded.add(src);
+      renderLogRows();
+    });
+  });
+  app.querySelectorAll('.log-filters input[data-cat]').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      const cat = cb.dataset.cat;
+      if (cb.checked) logExcludedCats.delete(cat); else logExcludedCats.add(cat);
       renderLogRows();
     });
   });

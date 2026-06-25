@@ -156,11 +156,23 @@ td { padding: 0.5rem; border-bottom: 1px solid var(--border); font-size: 0.85rem
 
 table.logtable { width: 100%; table-layout: fixed; border-collapse: collapse; }
 table.logtable col.c-t { width: 168px; }
+table.logtable col.c-lv { width: 64px; }
 table.logtable col.c-s { width: 110px; }
 table.logtable thead th { position: sticky; top: 0; background: var(--surface); z-index: 1; }
 table.logtable td.t { white-space: nowrap; color: var(--text-dim); vertical-align: top; }
+table.logtable td.lv { vertical-align: top; }
 table.logtable td.s { color: var(--blue); vertical-align: top; overflow: hidden; text-overflow: ellipsis; }
 table.logtable td.line { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; vertical-align: top; }
+
+/* level severity tint + badges */
+table.logtable tr.lvl-error { background: rgba(248, 113, 113, 0.07); }
+table.logtable tr.lvl-warn { background: rgba(251, 191, 36, 0.05); }
+.badge { display: inline-block; font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; padding: 0.05rem 0.35rem; border-radius: 3px; }
+.badge.error { background: var(--red); color: #1a0606; }
+.badge.warn { background: var(--yellow); color: #241c00; }
+.badge.info { background: var(--border); color: var(--text); }
+.badge.debug { background: transparent; color: var(--text-dim); border: 1px solid var(--border); }
+.cat { display: inline-block; font-size: 0.62rem; color: var(--text-dim); border: 1px solid var(--border); border-radius: 3px; padding: 0 0.3rem; margin-right: 0.5rem; text-transform: uppercase; letter-spacing: 0.03em; }
 
 @media (max-width: 760px) {
   .logs-layout { flex-direction: column; }
