@@ -45,6 +45,28 @@ nginx (TLS) → rust-monitor (:8800)
 | `MONITOR_INTERVAL` | `60` | Collection interval (seconds) |
 | `MONITOR_RETENTION_DAYS` | `30` | Metric retention |
 | `MONITOR_LOG_RETENTION_DAYS` | `7` | Log retention |
+| `MONITOR_INGEST_TOKEN` | (empty) | Bearer token for `POST /api/ingest`; empty disables ingestion |
+| `MONITOR_OIDC_ISSUER` / `_CLIENT_ID` / `_CLIENT_SECRET` | — | OIDC SSO config |
+
+## Log ingestion (shipping from other apps)
+
+Other applications ship logs by POSTing to `/api/ingest` (token-authed, bypasses OIDC):
+
+```
+POST /api/ingest
+Authorization: Bearer $MONITOR_INGEST_TOKEN
+{ "logs": [ { "source": "akurai-mail", "line": "INFO request ok …", "ts": 1750000000 } ] }
+```
+
+`ts` is optional (defaults to now). Lines are inserted into the `logs` table and
+broadcast live to connected dashboards. Apps use a pino transport that batches
+and POSTs (see `clients/pino-monitor-transport.mjs`).
+
+## Real-time
+
+- `/api/stream` is an SSE endpoint; the UI subscribes and updates live, falling
+  back to polling if the stream can't open. Collector samples ~5s for live push
+  but persists at `MONITOR_INTERVAL`.
 
 ## Constraints
 

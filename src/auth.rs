@@ -115,8 +115,8 @@ fn get_session_email(headers: &axum::http::HeaderMap) -> Option<String> {
 pub async fn auth_middleware(request: Request, next: Next) -> Response {
     let path = request.uri().path().to_string();
 
-    // Allow health endpoint and auth routes without auth
-    if path == "/api/health" || path.starts_with("/auth/") {
+    // Allow health, log ingestion (token-authed in the handler), and auth routes
+    if path == "/api/health" || path == "/api/ingest" || path.starts_with("/auth/") {
         return next.run(request).await;
     }
 

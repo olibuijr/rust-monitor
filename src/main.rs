@@ -12,7 +12,7 @@ use axum::{
     http::{header, HeaderValue},
     middleware,
     response::Response,
-    routing::get,
+    routing::{get, post},
     Router,
 };
 use tower_http::services::{ServeDir, ServeFile};
@@ -177,6 +177,7 @@ async fn main() {
         .route("/api/logs", get(routes::logs))
         .route("/api/alerts", get(routes::alerts))
         .route("/api/stream", get(stream::sse_handler))
+        .route("/api/ingest", post(routes::ingest))
         .route("/auth/callback", get(auth::auth_callback))
         .route("/auth/logout", get(auth::auth_logout))
         .fallback_service(static_service)

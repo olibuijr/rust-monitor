@@ -13,6 +13,7 @@ pub struct Config {
     pub oidc_client_id: String,
     pub oidc_client_secret: String,
     pub oidc_redirect_uri: String,
+    pub ingest_token: String,
 }
 
 static CONFIG: LazyLock<Config> = LazyLock::new(|| {
@@ -55,6 +56,7 @@ static CONFIG: LazyLock<Config> = LazyLock::new(|| {
         oidc_client_id: std::env::var("MONITOR_OIDC_CLIENT_ID").unwrap_or_default(),
         oidc_client_secret: std::env::var("MONITOR_OIDC_CLIENT_SECRET").unwrap_or_default(),
         oidc_redirect_uri: redirect_uri,
+        ingest_token: std::env::var("MONITOR_INGEST_TOKEN").unwrap_or_default(),
     }
 });
 
