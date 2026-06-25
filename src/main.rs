@@ -3,6 +3,7 @@ mod auth;
 mod collectors;
 mod config;
 mod db;
+mod dns_metrics;
 mod journald;
 mod routes;
 mod schema;
@@ -60,9 +61,12 @@ async fn main() {
         let mut last_persist: i64 = 0;
         loop {
             ticker.tick().await;
-            let metrics = tokio::task::spawn_blocking(collectors::collect_all)
+            let mut metrics = tokio::task::spawn_blocking(collectors::collect_all)
                 .await
                 .unwrap_or_default();
+            // Append the latest DNS window (derived from akurai-dns logs) so
+            // DNS badges stay live between persist intervals.
+            metrics.extend(dns_metrics::latest());
 
             let now = chrono::Utc::now().timestamp();
 
@@ -75,6 +79,13 @@ async fn main() {
             // Persist at the configured interval only
             if now - last_persist >= interval as i64 {
                 last_persist = now;
+                // Drain the DNS aggregator exactly once per interval so counts
+                // and qps reflect the true window, then persist alongside the
+                // system metrics (collect_all values are still current).
+                let dns = dns_metrics::drain(interval);
+                let mut metrics = metrics;
+                metrics.retain(|m| !m.name.starts_with("dns."));
+                metrics.extend(dns);
                 let count = metrics.len();
                 db::with_db(|conn| {
                     let tx = conn.unchecked_transaction().ok();

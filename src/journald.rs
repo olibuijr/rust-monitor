@@ -3,7 +3,7 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
-use crate::{db, stream};
+use crate::{db, dns_metrics, stream};
 
 /// Follow systemd-journald for the given units and ingest their log lines.
 /// Each unit's stdout/stderr (e.g. a Node service's console output, a Rust
@@ -50,6 +50,10 @@ async fn follow(units: &[String]) -> std::io::Result<()> {
                 match line {
                     Ok(Some(l)) => {
                         if let Some(entry) = parse_line(&l) {
+                            // Derive DNS metrics from akurai-dns query lines.
+                            if entry.0.contains("akurai-dns") {
+                                dns_metrics::observe(&entry.1);
+                            }
                             buf.push(entry);
                         }
                     }

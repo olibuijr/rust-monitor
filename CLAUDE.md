@@ -72,6 +72,23 @@ Authorization: Bearer $MONITOR_INGEST_TOKEN
 remote box can ship with `journalctl -f -o json -u <unit> | <poster>` that POSTs
 batches to `/api/ingest` with the bearer token.
 
+## DNS metrics (akurai-dns)
+
+DNS-specific metrics are derived from the akurai-dns log stream — no metrics
+endpoint or extra port on the DNS binary. `src/dns_metrics.rs` taps the journald
+lines (set `MONITOR_JOURNAL_UNITS=…,akurai-dns.service`), parses each `… UDP/TCP
+query … qtype=… rcode=… elapsed_us=…` line into an aggregator, and the metric
+collector drains it once per `MONITOR_INTERVAL` (so `dns.qps` is a true rate).
+Emitted series (charted on the dashboard under a DNS section):
+
+- `dns.qps`, `dns.queries`, `dns.proto.{udp,tcp}`
+- `dns.rcode.{noerror,formerr,servfail,nxdomain,refused,other}`
+- `dns.qtype.{a,aaaa,mx,txt,ns,soa,ptr,cname,srv,caa,other}`
+- `dns.latency_us.{avg,p95,max}`
+
+Only `dns.qps` and `dns.latency_us.p95` show as status cards; the rest are
+chart-only (`ui/app.js` `DNS_CARDS` / `cardVisible`).
+
 ## Real-time
 
 - `/api/stream` is an SSE endpoint; the UI subscribes and updates live, falling

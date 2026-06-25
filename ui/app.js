@@ -46,7 +46,15 @@ function formatValue(name, value) {
   if (name.includes('bytes')) return formatBytes(value) + '/s';
   if (name === 'uptime.seconds') return formatDuration(value);
   if (name.startsWith('load.')) return value.toFixed(2);
+  if (name === 'dns.qps') return value.toFixed(2) + '/s';
+  if (name.startsWith('dns.latency_us.')) return formatMicros(value);
+  if (name.startsWith('dns.')) return value.toFixed(0);
   return value.toFixed(1);
+}
+
+function formatMicros(us) {
+  if (us < 1000) return us.toFixed(0) + ' µs';
+  return (us / 1000).toFixed(1) + ' ms';
 }
 
 function formatBytes(b) {
@@ -73,6 +81,8 @@ function metricLabel(name) {
     'load.5m': 'Load 5m',
     'load.15m': 'Load 15m',
     'uptime.seconds': 'Uptime',
+    'dns.qps': 'DNS Queries/s',
+    'dns.latency_us.p95': 'DNS Latency p95',
   };
   if (labels[name]) return labels[name];
   if (name.startsWith('disk.')) return name.replace('disk.', 'Disk ').replace('.used_pct', ' Usage').replace('.total_gb', ' Total').replace('.used_gb', ' Used');
@@ -215,7 +225,57 @@ function chartSpecs(names) {
     });
   }
 
+  // DNS (akurai-dns) — only when its metrics are flowing.
+  if (names.some((n) => n.startsWith('dns.'))) {
+    specs.push({
+      title: 'DNS Query Rate',
+      series: [{ name: 'dns.qps', color: '--blue', label: 'queries/s' }],
+      min: 0,
+      fmt: (v) => v.toFixed(1) + '/s',
+    });
+    specs.push({
+      title: 'DNS Response Codes',
+      series: [
+        { name: 'dns.rcode.noerror', color: '--green', label: 'NOERROR' },
+        { name: 'dns.rcode.nxdomain', color: '--yellow', label: 'NXDOMAIN' },
+        { name: 'dns.rcode.refused', color: '--red', label: 'REFUSED' },
+        { name: 'dns.rcode.servfail', color: '--text-dim', label: 'SERVFAIL' },
+      ],
+      min: 0,
+      fmt: (v) => v.toFixed(0),
+    });
+    specs.push({
+      title: 'DNS Query Types',
+      series: [
+        { name: 'dns.qtype.a', color: '--blue', label: 'A' },
+        { name: 'dns.qtype.aaaa', color: '--green', label: 'AAAA' },
+        { name: 'dns.qtype.mx', color: '--yellow', label: 'MX' },
+        { name: 'dns.qtype.txt', color: '--red', label: 'TXT' },
+        { name: 'dns.qtype.ptr', color: '--text-dim', label: 'PTR' },
+      ],
+      min: 0,
+      fmt: (v) => v.toFixed(0),
+    });
+    specs.push({
+      title: 'DNS Latency',
+      series: [
+        { name: 'dns.latency_us.avg', color: '--green', label: 'avg' },
+        { name: 'dns.latency_us.p95', color: '--yellow', label: 'p95' },
+        { name: 'dns.latency_us.max', color: '--red', label: 'max' },
+      ],
+      min: 0,
+      fmt: (v) => (v < 1000 ? v.toFixed(0) + 'µs' : (v / 1000).toFixed(1) + 'ms'),
+    });
+  }
+
   return specs;
+}
+
+// DNS emits ~23 series for charts; only these two are worth a status card —
+// the rest live in the DNS chart section.
+const DNS_CARDS = new Set(['dns.qps', 'dns.latency_us.p95']);
+function cardVisible(name) {
+  return !name.startsWith('dns.') || DNS_CARDS.has(name);
 }
 
 function badgeKey(metrics) {
@@ -282,7 +342,7 @@ async function renderDashboard(seedMetrics) {
     return;
   }
 
-  const sorted = sortMetrics(metrics);
+  const sorted = sortMetrics(metrics).filter((m) => cardVisible(m.name));
   renderedBadgeKey = badgeKey(metrics);
   currentSpecs = chartSpecs(metrics.map((m) => m.name));
 
