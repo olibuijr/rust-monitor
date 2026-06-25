@@ -31,6 +31,7 @@ nginx (TLS) → rust-monitor (:8800)
 - `src/tailer.rs` — log file tailing (seek-to-end, poll new lines)
 - `src/alert.rs` — alert rule evaluation + log file writer
 - `src/routes.rs` — API: /api/health, /api/status, /api/metrics, /api/logs, /api/alerts
+- `src/auth.rs` — OIDC/PKCE login via auth.olibuijr.com, in-memory sessions, axum middleware
 
 ## Environment Variables
 

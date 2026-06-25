@@ -217,8 +217,8 @@ fn collect_network() -> Vec<Metric> {
     let Some(snap1) = read_net() else {
         return vec![];
     };
-    // CPU collector already slept 1s, so we use the same interval window.
-    // Network delta is approximate over the collection cycle.
+    // Sample over a 1s window so rx/tx deltas reflect actual throughput.
+    std::thread::sleep(std::time::Duration::from_secs(1));
     let Some(snap2) = read_net() else {
         return vec![];
     };

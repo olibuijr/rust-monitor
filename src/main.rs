@@ -39,12 +39,16 @@ async fn main() {
             let now = chrono::Utc::now().timestamp();
             let count = metrics.len();
             db::with_db(|conn| {
+                let tx = conn.unchecked_transaction().ok();
                 for m in &metrics {
                     conn.execute(
                         "INSERT INTO metrics (name, value, ts) VALUES (?1, ?2, ?3)",
                         rusqlite::params![m.name, m.value, now],
                     )
                     .ok();
+                }
+                if let Some(tx) = tx {
+                    tx.commit().ok();
                 }
             });
 
@@ -68,12 +72,16 @@ async fn main() {
             let now = chrono::Utc::now().timestamp();
             let count = entries.len();
             db::with_db(|conn| {
+                let tx = conn.unchecked_transaction().ok();
                 for (source, line) in &entries {
                     conn.execute(
                         "INSERT INTO logs (source, line, ts) VALUES (?1, ?2, ?3)",
                         rusqlite::params![source, line, now],
                     )
                     .ok();
+                }
+                if let Some(tx) = tx {
+                    tx.commit().ok();
                 }
             });
 
