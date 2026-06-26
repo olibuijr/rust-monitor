@@ -116,12 +116,16 @@ pub async fn auth_middleware(request: Request, next: Next) -> Response {
     let path = request.uri().path().to_string();
 
     // Allow health, log ingestion (token-authed in the handler), auth routes,
-    // and browser icon assets (requested before the session exists).
+    // browser icon assets, and theme assets (needed before session exists so the
+    // login redirect page renders with the correct theme).
     if path == "/api/health"
         || path == "/api/ingest"
         || path.starts_with("/auth/")
         || path == "/favicon.svg"
         || path == "/apple-touch-icon.png"
+        || path == "/theme.js"
+        || path == "/themes.css"
+        || path == "/themes.json"
     {
         return next.run(request).await;
     }
