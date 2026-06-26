@@ -16,7 +16,8 @@
   <script>
     (function () {
       try {
-        var t = localStorage.getItem("akurai-theme");
+        var m = document.cookie.match(/(?:^|; )akurai-theme=([^;]*)/);
+        var t = (m ? decodeURIComponent(m[1]) : null) || localStorage.getItem("akurai-theme");
         if (!t) t = matchMedia("(prefers-color-scheme: light)").matches ? "akurai-light" : "akurai";
         document.documentElement.setAttribute("data-theme", t);
       } catch (e) {}
